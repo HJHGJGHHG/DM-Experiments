@@ -1,0 +1,138 @@
+\input{Style/style}
+\begin{document}
+\title{数据挖掘第一次上机实验报告}
+\author{刘臻劼}
+
+\input{Content/titlepage.tex} % 这个是封面，不需要刻意注释掉
+
+\clearpage
+\tableofcontents
+\pagestyle{preContent}
+
+\clearpage
+\section{实验内容}
+\subsection{实验目标}
+\xiaosi\begin{spacing}{1.5} 本次实验目标为：在MovieLens数据集上构建“用户——电影”评分矩阵，基于评分矩阵对用户与电影进行推荐。
+\end{spacing}
+\subsection{数据集介绍}
+\xiaosi\begin{spacing}{1.5}
+MovieLens数据集包含6040个用户关于3883部电影的1000209条评分信息。数据集分为三个文件：用户数据users.dat、电影数据movies.dat和评分数据ratings.dat。\par
+（1）用户数据\par
+关于6040个用户的个人脱敏数据，格式为
+{\setlength\abovedisplayskip{1pt}
+\setlength\belowdisplayskip{1pt}
+\begin{align}
+UserID::Gender::Age::Occupation::Zip-code
+\nonumber\end{align}
+}
+其中：\par
+$UserID$：1到6040顺序编号；\par
+$Gender$：F为女性，M为男性；\par
+$Age$：分为1,18,25,35,45,50,56共7类，代表用户所属的年龄段；\par
+$Occupation$：0到20的整数，分别代表21种职业；\par
+$Zip-code$：邮编。\par
+（2）电影数据\par
+关于3883部电影的信息，格式为
+{\setlength\abovedisplayskip{1pt}
+\setlength\belowdisplayskip{1pt}
+\begin{align}
+MovieID::Title::Genres
+\nonumber\end{align}
+}
+其中：\par
+$MovieID$：1到3952无重复的整数，非连续编号；\par
+$Title$：电影名，为电影名与年份的拼接，如“Toy Story (1995)”；\par
+$Genres$：电影所属的类别，如果同属多个类别，则类名间用“|”隔开，如：“Adventure|Children's”。\par
+（3）评分数据\par
+用户对电影的1000209条评分数据，格式为
+{\setlength\abovedisplayskip{1pt}
+\setlength\belowdisplayskip{1pt}
+\begin{align}
+UserID::MovieID::Rating::Timestamp
+\nonumber\end{align}
+}
+其中：\par
+$UserID,\ MovieID$：同上；\par
+$Rating$：1到5之间（含）的整数；\par
+$Timestamp$：自1970年1月1日零点后到用户提交评价的时间的秒数。
+\end{spacing}
+
+
+\clearpage
+\section{实验分析}
+\subsection{题目分析}
+\xiaosi\begin{spacing}{1.5}
+原问题包含两个要求，一是对题给的用户——电影打分数据集进行建模。再是完善评分矩阵并进行推荐。\par
+\begin{wrapfigure}{r}{5cm}%靠文字内容的右侧
+\centering
+\includegraphics[width=0.27\textwidth]{Figure/simrank-f1.png}
+\caption{二部图模型}
+\end{wrapfigure}
+（1）用户——电影打分建模\par
+我们考虑用户集 $U=\{u_1,u_2,\cdots u_n\},n=6040$，电影集 $V=\{v_1,v_2,\cdots,v_m\},m=3883$。则用户对电影的评分可视作以 $U,\ V$ 构建的二部图 $G=<U,V,E>$ 相应边的权重，其中边集 $E \subseteq U \times V$，则第$i$个用户对第$j$部电影的评分 $r_{ij}=h(u_i,v_j),\ h:E\rightarrow [0,5]$，此处评分函数的值域为$[0,5]$，将原始任务中的多类分类问题转化为了回归问题，这是考虑到评分允许浮点更加自然。\par
+（2）评分矩阵\par
+在（1）我们知道边集 $E \subseteq U \times V$，而实际上 $|E|\ll |U|\cdot|V|$，这说明全体用户对所有电影的评价矩阵 $\mathbf{R}=(r_{ij})_{m\times n}$ 是较稀疏的。而本实验的核心问题则是如何通过现有数据补全评价矩阵$\mathbf{R}$。补全评分矩阵后我们将基于此进行推荐。
+\end{spacing}
+
+\subsection{推荐算法简介}
+\subsubsection{推荐算法的分类}
+\xiaosi\begin{spacing}{1.5}
+所谓推荐算法，即是根据用户行为推测其喜好的一类算法。推荐算法历史悠久，在机器学习还没有兴起的时候就有需求和应用了。概括来说，可以分为以下5种\cite{1}：\par
+（1）基于内容的推荐：这一类一般依赖于NLP方法，通过挖掘文本的TF-IDF特征向量，来得到用户的偏好，进而做推荐。\par
+（2）协调过滤推荐：协调过滤是推荐算法中目前最主流的种类，花样繁多，目前绝大多数实际应用的推荐算法都是协同过滤推荐算法。\par
+（3）混合推荐：类似机器学习中的集成学习，博才众长，通过多个推荐算法的结合，得到一个更好的推荐算法。\par
+（4）基于规则的推荐：这类算法常见的比如基于最多用户点击，最多用户浏览等，属于大众型的推荐方法，在目前的大数据时代并不主流。\par
+（5）基于知识的推荐：在某种程度是可以看成是一种推理技术，它不是建立在用户需要和偏好基础上推荐的。\par
+\end{spacing}
+\subsubsection{协同过滤推荐算法}
+\xiaosi\begin{spacing}{1.5}
+我们接下来重点讨论协同过滤的推荐算法。协同过滤分析用户兴趣，在用户群中找到指定用户的相似（兴趣）用户，综合这些相似用户对某一信息的评价，形成对该指定用户对此信息的喜好程度预测。\par
+协同过滤问题一般这样呈现：只有部分用户和部分对象之间是有评分数据的，其它部分评分是空白，此时我们要用已有的部分稀疏数据来预测那些空白的物品和数据之间的评分关系，找到最高评分的物品推荐给用户。很明显本实验属于一协同过滤问题。
+\end{spacing}
+
+\subsection{模型设计}
+\xiaosi\begin{spacing}{1.5}
+明确题意后，我们来讨论解决方法。针对本题考虑使用基于图论的方法与基于矩阵分解及深度学习方法。
+\subsubsection{图论方法}
+由 2.1 节，我们将用户——电影建模为二部图，我们可以考虑使用基于图的 SimRank \cite{2}算法。其核心思想是\cite{3}：如果两个用户相似，则与这两个用户相关联的物品也类似；如果两个物品类似，则与这两个物品相关联的用户也类似。
+\subsubsection{矩阵分解结合深度学习}
+协同过滤中另一经典算法为矩阵分解。我们希望评分矩阵有如下分解： 
+{\setlength\abovedisplayskip{1pt}
+\setlength\belowdisplayskip{1pt}
+\begin{align}
+\mathbf{R}_{m\times n}=\mathbf{P}_{m\times k}\mathbf{Q}_{k\times n}
+\end{align}
+}
+而在此处我们不使用传统矩阵分解方法来求解矩阵 $\mathbf{P}$ 与 $\mathbf{Q}$，而是通过深度学习方法得到。\par
+传统方法以及上文提到的图论方法仅利用了用户对电影的评分数据，其他诸如用户性别，电影名及类别等等信息则没有利用。通过深度学习方法可以更充分地利用全部信息。对于式（1），我们可以认为 $\mathbf{P}$ 为用户特征矩阵，$\mathbf{Q}$ 为电影特征矩阵。\par
+（1）模型概览
+模型的概览图如下：
+\clearpage
+\begin{figure}
+\setlength{\abovecaptionskip}{0.cm}
+\setlength{\belowcaptionskip}{-0.cm}
+\centering
+\includegraphics[width=0.8\textwidth]{Figure/2.png}
+\caption{模型示意图}
+\end{figure}
+
+\par
+
+（2）用户特征提取\par
+用户信息中，对于 $Gender,\ Age,\ Job$ 三个字段的信息，由于类别数较少可以采用 One-Hot 编码。而 $UserID$ 由于类别太多故而此处采用Embedding方法，用$embedding\_ dim=32$ 维向量表示用户的ID值。\par
+将 $UserID$ 的Embedding向量与其他信息One-Hot向量拼接并通过全连接层并通过 ReLU激活，而后再次通过全连接层并进行批归一化。至此得到了用户信息的特征矩阵。\par
+（3）电影特征提取\par
+对于电影信息中 $MovieID$ 与 $MovieType$ 字段，类似用户信息的处理。ID通过Embedding得到，电影类型为Multi-Hot向量。\par
+而对于电影名称，此处采用CNN提取特征。CNN在NLP的应用最早来源于Kim在2014年的工作\cite{4}。相比CV领域，TextCNN结构较为简单，一般仅有词嵌入、卷积、池化与全连接四部分。而本文用其提取电影文本特征，仅包含词嵌入、卷积与池化三个部分。最后再将电影名称信息与电影信息拼接通过全连接层，得到电影信息的特征矩阵。\par
+（4）拟合评分
+上述步骤完成后，我们得到了用户特征矩阵 $\mathbf{P}_i \in \mathbb{R}^{batch\_ size \times hidden\_ size}$ 与电影特征矩阵 $\mathbf{Q}_i \in \mathbb{R}^{batch\_ size \times hidden\_ size}$，其中 $i$ 为批次数。则我们可以将二者逐点相乘，再按行求和作为模型拟合结果。通过计算与目标值的MSE误差得到梯度并反向传播优化。
+
+\end{spacing}
+
+
+
+\clearpage
+
+
+\printbibliography%[heading=bibliography,title=参考文献]
+\end{document}
