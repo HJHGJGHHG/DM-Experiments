@@ -153,8 +153,31 @@ s_{k+1}(u_i,u_j)=\frac{C}{|V(u_i)||V(u_j)|}\cdot \sum_{p=1}^{|V(u_i)|}\sum_{q=1}
 s_{k+1}(u_i,u_j)&=\frac{C}{|V(u_i)||V(u_j)|}\cdot \sum_{p=1}^{|V|}\sum_{q=1}^{|V|} {c_{ip}\cdot c_{jq}\cdot s(v_p,v_q)}\\
 &=C\sum_{p=1}^{|V|}\sum_{q=1}^{|V|}(\frac{c_{ip}}{\sum_{e_1=1}^{n}c_{ie_1}})s(v_p,v_q)(\frac{c_{jq}}{\sum_{e_2=1}^n c_{je_2}})
 \end{align}
+}\par
+注意到 $s(v_p,v_q)=y_{pq}$，所以（7）式可写成矩阵的形式：
+{\setlength\abovedisplayskip{1pt}
+\setlength\belowdisplayskip{1pt}
+\begin{align}
+\mathbf{X}_{k+1} = C\cdot\mathbf{C}^{row}\cdot \mathbf{Y_k} \cdot \mathbf{C}^{row\ T}+ \mathbf{E}_{m\times m} - \Lambda ({C\cdot\mathbf{C}^{row}\cdot \mathbf{Y_k} \cdot \mathbf{C}^{row\ T}})
+\end{align}
 }
-
+其中：$C$ 为阻尼系数；$\mathbf{C}^{row}$ 为选择矩阵按行归一化；$\mathbf{E}_{m\times m}$ 为 $m\times m$ 的单位矩阵；$\Lambda$ 为只保留矩阵的对角元素而其他元素置0。公式后半部分的 $\mathbf{E}_{m\times m} - \Lambda ({C\cdot\mathbf{C}^{row}\cdot \mathbf{Y_k} \cdot \mathbf{C}^{row\ T}})$ 为将矩阵主对角线元素置1，这是考虑到任意用户与自身的相似度为1。\par
+同理，电影相似度矩阵也有迭代公式：
+{\setlength\abovedisplayskip{1pt}
+\setlength\belowdisplayskip{1pt}
+\begin{align}
+\mathbf{Y}_{k+1} = C\cdot\mathbf{C}^{row\ T}\cdot \mathbf{X_k} \cdot \mathbf{C}^{row}+ \mathbf{E}_{n\times n} - \Lambda (C\cdot\mathbf{C}^{row\ T}\cdot \mathbf{X_k} \cdot \mathbf{C}^{row})
+\end{align}
+}\par
+（4）评分矩阵的补全\par
+根据（8）、（9）式经过多次迭代基本稳定后我们即得到了$\mathbf{X},\mathbf{Y}$，接下来我们基于此补全评分矩阵 $\mathbf{R}_{m\times n}$。为了充分利用已知信息，对于 $r_{ij},\ <u_i,v_j>\notin E$，同时使用用户 $u_i$ 与电影 $v_j$ 的所有评分。于是有：
+{\setlength\abovedisplayskip{1pt}
+\setlength\belowdisplayskip{1pt}
+\begin{align}
+r_{ij} = 
+\frac{\sum_{p=1}^n c_{ip}\cdot r_{ip}\cdot s(v_p,v_j) + \sum_{q=1}^{m} c_{qj}\cdot r_{qj}\cdot s(u_q,u_i)}{\sum_{e_1 = 1}^n c_{ie_1}+ \sum_{e_2 = 1}^m c_{e_2j}}
+\end{align}
+}\par
 \subsubsection{矩阵分解结合深度学习}
 协同过滤中另一经典算法为矩阵分解。我们希望评分矩阵有如下分解： 
 {\setlength\abovedisplayskip{1pt}
@@ -298,21 +321,23 @@ mid_rated = movies.keys() # 3706
 total_mid = movie['movie_id'].values # 3883
 mid_not_rated = [x for x in total_mid if x not in mid_rated] # 177
 \end{lstlisting}\par
-构造选择矩阵 $\mathbf{C}_{6040 \times 3706}$。
+再从中抽取10000条数据用于模型测试并根据训练集构建选择矩阵 $\mathbf{C}_{6040\times 3706}$ 与初始评分矩阵 $\mathbf{R}_{6040\times 3706}$。
 \begin{lstlisting}
-choice_matrix = pd.DataFrame(np.zeros([6040, 3706]), dtype=int)
-choice_matrix.columns = movies.keys()
-choice_matrix.index = users.keys()
+choice_matrix = pd.DataFrame(np.zeros([6040, 3706], dtype=float))
+rank_matrix_initial = pd.DataFrame(np.zeros([6040, 3706], dtype=float))
 
-for i in range(len(data)):
-    sample = data.iloc[i]
+for i in range(len(train)):
+    sample = train.iloc[i]
     uid = sample['user_id']
     mid = sample['movie_id']
-    choice_matrix[mid][uid] = 1
-\end{lstlisting}\par
-再从中抽取10000条数据用于模型测试。至此数据预处理部分完成。
-\begin{lstlisting}
-train, test = train_test_split(data, test_size=10000)
+    rank = sample['rank']
+    user_index = user_index_to_uid.index(uid)
+    movie_index = movie_index_to_mid.index(mid)
+    choice_matrix[movie_index][user_index] = 1
+    rank_matrix_initial[movie_index][user_index] = rank
+
+pkl.dump(choice_matrix, open('choice_matrix.pkl', 'wb'))
+pkl.dump(rank_matrix_initial, open('rank_matrix_initial.pkl', 'wb'))
 \end{lstlisting}\par
 
 \subsection{矩阵分解结合深度学习方法}
@@ -397,6 +422,237 @@ class MovieLens(nn.Module):
         
         return output, user_feature, movie_feature
 \end{lstlisting}\par
+深度学习模型的训练：
+\begin{lstlisting}
+def load_model(args):
+    set_seed(args)
+    train_datasets = MovieRankDataset(pkl_file=args.path + 'train.pkl', args=args)
+    test_datasets = MovieRankDataset(pkl_file=args.path + 'test.pkl', args=args)
+    train_iter = DataLoader(train_datasets, batch_size=args.batch_size, drop_last=True)
+    test_iter = DataLoader(test_datasets, batch_size=args.batch_size)
+    model = MovieLens(user_max_dict=user_max_dict, movie_max_dict=movie_max_dict, args=args).to(args.device)
+    return train_iter, test_iter, model
+
+
+def train(args, model, train_iter):
+    # optimizer
+    no_decay = ['bias', 'LayerNorm.bias', 'LayerNorm.weight']
+    optimizer_grouped_parameters = [
+        {'params': [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)],
+         'weight_decay': 0.01},
+        {'params': [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
+    ]
+    optimizer = Adam(optimizer_grouped_parameters, lr=args.lr)
+    # criterion
+    criterion = nn.MSELoss()
+    writer = SummaryWriter(logdir='/root/tf-logs')
+    for epoch in range(args.epochs):
+        print('Epoch [{}/{}]'.format(epoch + 1, args.epochs))
+        model = model.train()
+        losses = []
+        for i_batch, sample_batch in enumerate(train_iter):
+            user_inputs = sample_batch['user_inputs']
+            movie_inputs = sample_batch['movie_inputs']
+            target = torch.squeeze(sample_batch['target'].to(args.device))
+            
+            rank, _, _ = model(user_inputs, movie_inputs)
+            loss = criterion(rank, target)
+            losses.append(loss.item())
+            loss.backward()
+            if i_batch % 100 == 0:
+                writer.add_scalar('data/loss', loss, i_batch * 20)
+                print('Steps: {}\{}  Loss: {}'.format(i_batch, len(train_iter), loss.item()))
+            
+            # nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            optimizer.step()
+            optimizer.zero_grad()
+        # 一个Epoch训练完毕，输出train_loss
+        print('Epoch: {0}   Train Loss: {1:>5.6}'.format(epoch + 1, np.mean(losses)))
+    
+    writer.export_scalars_to_json("./test.json")
+    writer.close()
+\end{lstlisting}\par
+\subsection{SimRank算法}
+\begin{lstlisting}
+def simrank(args):
+    user_index_to_uid = pkl.load(open(args.path + 'user_index_to_uid.pkl', 'rb'))
+    movie_index_to_mid = pkl.load(open(args.path + 'movie_index_to_mid.pkl', 'rb'))
+    R = pkl.load(open(args.path + 'rank_matrix_initial.pkl', 'rb'))
+    C = pkl.load(open(args.path + 'choice_matrix.pkl', 'rb'))  # Choice Matrix
+    C_col = C.apply(normalization, axis=0)  # 列归一化
+    C_row = C.apply(normalization, axis=1)  # 行归一化
+    X = pd.DataFrame(np.zeros([6040, 6040], dtype=int))
+    Y = pd.DataFrame(np.zeros([3706, 3706], dtype=int))
+    
+    for k in range(args.k):
+        X_new = args.c * np.dot(np.dot(C_row, Y), np.matrix(C_row).T) + np.eye(6040) - np.diag(
+            np.diagonal(args.c * np.dot(np.dot(C_row, Y), np.matrix(C_row).T)))
+        Y_new = args.c * np.dot(np.dot(C_col.T, X), C_col) + np.eye(3706) - np.diag(
+            np.diagonal(args.c * np.dot(np.dot(C_col.T, X), C_col)))
+        X = X_new
+        Y = Y_new
+    
+    def series_notzero_values(series):
+        val = 0
+        for i in series.index:
+            if series[i] > 0:
+                val += 1
+        return val
+    
+    for i in R.index:
+        for j in R.columns:
+            if R.iloc[i][j] > 0:
+                pass
+            else:
+                val = 0
+                for p in R.columns:
+                    val += C.iloc[i][p] * R.iloc[i][p] * Y[p, j]
+                for q in R.index:
+                    val += C.iloc[q][j] * R.iloc[q][j] * X[q, i]
+                not_zero_val = series_notzero_values(C[j]) + series_notzero_values(C.iloc[i])
+                # not_zero_val = series_notzero_values(C.iloc[i])
+                R[j][i] = val / not_zero_val
+    
+    return R
+\end{lstlisting}\par
+\subsection{推荐}
+\begin{lstlisting}
+def recommend_Movies(args, uid, rank_matrix):
+    """
+    根据 UserID 为其推荐电影与也喜欢看这些电影的用户 (相似用户)
+    """
+    users_raw, movies_raw, _, _ = load_preprocessed_data(args)
+    user_ratings = rank_matrix.loc[uid].sort_values(ascending=False)
+    top_k_movies = list(user_ratings.index)[0:args.recommend_num]
+    similar_users = []
+    print('该用户信息：' + 'UserID: {0}    Gender:{1}    Age:{2}    Occupation:{3}'.format(
+        uid, user_gender[users_raw[uid]['Gender']], user_age[users_raw[uid]['Age']], user_job[users_raw[uid]['Job']]
+    ))
+    print('为该用户推荐的电影：')
+    for i, mid in enumerate(top_k_movies):
+        # 推荐电影
+        movie_recommend = movies_raw[mid]
+        print('{0}: MovieID: {1}    Movie Title: {2}    Movie Type: {3}'.format(
+            i + 1, movie_recommend['Movie_ID'], movie_recommend['Movie_Title'], movie_recommend['Movie_Type']
+        ))
+        # 获取相似用户 (对推荐电影评分最高者)
+        movie_ratings = rank_matrix[mid].sort_values(ascending=False)
+        for j in range(len(movie_ratings)):
+            similar_user = movie_ratings.index[j]
+            if similar_user in similar_users:
+                continue
+            else:
+                similar_users.append(similar_user)
+                break
+    print('为该用户推荐的相似用户：')
+    for i, similar_user_id in enumerate(similar_users):
+        user_recommend = users_raw[similar_user_id]
+        print('{0}: UserID: {1}    Gender:{2}    Age:{3}    Occupation:{4}'.format(
+            i + 1, similar_user_id, user_gender[user_recommend['Gender']],
+            user_age[user_recommend['Age']], user_job[user_recommend['Job']]
+        ))
+
+
+def recommend_Users(args, mid, rank_matrix):
+    """
+    根据 MovieID 得到喜欢看该电影的用户与他们喜欢看的电影 (相似电影)
+    """
+    users_raw, movies_raw, _, _ = load_preprocessed_data(args)
+    movie_ratings = rank_matrix[mid].sort_values(ascending=False)
+    top_k_users = list(movie_ratings.index)[0:args.recommend_num]
+    similar_movies = []
+    print('该电影信息：' + 'MovieID: {0}    Movie Title: {1}    Movie Type: {2}'.format(
+        mid, movies_raw[mid]['Movie_Title'], movies_raw[mid]['Movie_Type']
+    ))
+    print('喜欢看这部电影的用户：')
+    for i, uid in enumerate(top_k_users):
+        user_recommend = users_raw[uid]
+        print('{0}: UserID: {1}    Gender:{2}    Age:{3}    Occupation:{4}'.format(
+            i + 1, uid, user_gender[user_recommend['Gender']],
+            user_age[user_recommend['Age']], user_job[user_recommend['Job']]
+        ))
+        user_ratings = rank_matrix.loc[uid].sort_values(ascending=False)
+        for j in range(len(user_ratings)):
+            similar_movie = movie_ratings.index[j]
+            if similar_movie in similar_movies:
+                continue
+            else:
+                similar_movies.append(similar_movie)
+                break
+    print('他们也在看：')
+    for i, similar_movie_id in enumerate(similar_movies):
+        movie_recommend = movies_raw[similar_movie_id]
+        print('{0}: MovieID: {1}    Movie Title: {2}    Movie Type: {3}'.format(
+            i + 1, movie_recommend['Movie_ID'], movie_recommend['Movie_Title'], movie_recommend['Movie_Type']
+        ))
+\end{lstlisting}
+\end{spacing}
+
+\section{实验结果}
+\subsection{推荐结果}
+\xiaosi\begin{spacing}{1.5}
+（1）矩阵分解结合深度学习方法\par
+为编号为2021的用户推荐电影与相似用户：\par
+\clearpage
+\begin{figure}[h]
+\setlength{\abovecaptionskip}{0.0cm}
+\setlength{\belowcaptionskip}{-0.cm}
+\centering
+\includegraphics[width=1\textwidth]{Figure/dl1.png}
+\end{figure}\par
+\par
+为编号为2021的电影相似电影与相关用户：
+\begin{figure}[h]
+\setlength{\abovecaptionskip}{0.0cm}
+\setlength{\belowcaptionskip}{-0.cm}
+\centering
+\includegraphics[width=1\textwidth]{Figure/dl2.png}
+\end{figure}\par
+\par
+（2）SimRank 算法\par
+为编号为2021的用户推荐电影与相似用户：\par
+\begin{figure}[h]
+\setlength{\abovecaptionskip}{0.0cm}
+\setlength{\belowcaptionskip}{-0.cm}
+\centering
+\includegraphics[width=1\textwidth]{Figure/svd1.png}
+\end{figure}\par
+\par
+为编号为2021的电影推荐相似电影：\par
+\begin{figure}[H]
+\setlength{\abovecaptionskip}{0.0cm}
+\setlength{\belowcaptionskip}{-0.cm}
+\centering
+\includegraphics[width=1\textwidth]{Figure/svd2.png}
+\end{figure}\par
+\par
+\clearpage
+
+
+\subsection{模型对比}
+在预先划分的10000条数据构成的测试集上比较SimRank算法与矩阵分解算法的MSE误差，结果如下：\par
+\begin{table}[h]
+\centering
+\caption{各模型基本信息与MSE指标}
+\label{tab:1}
+\begin{tabular}{cccc}
+\toprule[2pt]
+Models & Parameters & Time Cost & MSE  \\
+\noalign{\smallskip}\hline\noalign{\smallskip}
+SimRank & K=10, C=1 & 14m37.2s & 2.083 \\
+SimRank & K=10, C=0.8& 15m32.6s & \textbf{1.657} \\
+\hline\noalign{\smallskip}
+FunkSVD+DL & 4epoch, lr=3e-4, bs=512 & 51m18.2s & 0.880 \\
+FunkSVD+DL & 4epoch, lr=5e-4, bs=512 & 49m26.7s & 0.899 \\
+FunkSVD+DL & 5epoch, lr=3e-4, bs=512 & 61m63.1s & \textbf{0.865} \\
+
+\toprule[2pt]
+\end{tabular}
+
+
+\end{table}
+
+
 \end{spacing}
 
 \clearpage
