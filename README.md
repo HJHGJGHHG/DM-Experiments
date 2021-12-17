@@ -6,3 +6,6 @@
 
 ## 二、关联规则挖掘（见Apriori目录）
 &emsp;&emsp;基于 Apriori 算法的国会投票关联规则挖掘。
+
+## 三、层次聚类
+&emsp;&emsp;基于Karate Club的层次聚类  
